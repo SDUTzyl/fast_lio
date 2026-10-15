@@ -1,6 +1,8 @@
 #include "preprocess.h"
 
 #include <pcl/common/common.h>
+#include <algorithm>
+#include <cmath>
 
 #define RETURN0 0x00
 #define RETURN0AND1 0x10
@@ -44,11 +46,13 @@ void Preprocess::set(bool feat_en, int lid_type, double bld, int pfilt_num)
   point_filter_num = pfilt_num;
 }
 
+#ifdef HAVE_LIVOX_ROS_DRIVER2
 void Preprocess::process(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, PointCloudXYZI::Ptr& pcl_out)
 {
   avia_handler(msg);
   *pcl_out = pl_surf;
 }
+#endif
 
 void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, PointCloudXYZI::Ptr& pcl_out)
 {
@@ -85,6 +89,10 @@ void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, Po
       mid360_handler(msg);
       break;
 
+    case HESAI_JT128:
+      hesai_jt128_handler(msg);
+      break;
+
     default:
       default_handler(msg);
       break;
@@ -92,6 +100,7 @@ void Preprocess::process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, Po
   *pcl_out = pl_surf;
 }
 
+#ifdef HAVE_LIVOX_ROS_DRIVER2
 void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg)
 {
   pl_surf.clear();
@@ -191,6 +200,57 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr
       }
     }
   }
+}
+#endif
+
+void Preprocess::hesai_jt128_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg)
+{
+  pl_surf.clear();
+  pl_corn.clear();
+  pl_full.clear();
+
+  // Unitree's raw JT128 cloud carries absolute epoch seconds in a float64
+  // "timestamp" field. FAST-LIO stores the offset from the scan header in ms.
+  const auto time_field = std::find_if(msg->fields.begin(), msg->fields.end(),
+      [](const sensor_msgs::msg::PointField &field) {
+        return field.name == "timestamp" && field.datatype == sensor_msgs::msg::PointField::FLOAT64;
+      });
+  if (time_field == msg->fields.end()) {
+    static bool warned = false;
+    if (!warned) {
+      std::cerr << "JT128 cloud has no float64 timestamp field; refusing undeskewable scan\n";
+      warned = true;
+    }
+    return;
+  }
+
+  pcl::PointCloud<hesai_ros::Point> input;
+  pcl::fromROSMsg(*msg, input);
+  pl_surf.reserve(input.size() / std::max(1, point_filter_num));
+  const double scan_start = rclcpp::Time(msg->header.stamp).seconds();
+
+  for (std::size_t i = 0; i < input.size(); ++i) {
+    if (i % std::max(1, point_filter_num) != 0) continue;
+    const auto &source = input.points[i];
+    if (source.ring >= N_SCANS || !std::isfinite(source.x) ||
+        !std::isfinite(source.y) || !std::isfinite(source.z) ||
+        !std::isfinite(source.timestamp)) continue;
+    const double range_squared = source.x * source.x + source.y * source.y + source.z * source.z;
+    if (range_squared <= blind * blind) continue;
+    const double offset_ms = (source.timestamp - scan_start) * 1000.0;
+    if (offset_ms < -0.001 || offset_ms > 1000.0) continue;
+
+    PointType point;
+    point.x = source.x;
+    point.y = source.y;
+    point.z = source.z;
+    point.intensity = source.intensity;
+    point.normal_x = point.normal_y = point.normal_z = 0.0f;
+    point.curvature = static_cast<float>(std::max(0.0, offset_ms));
+    pl_surf.push_back(point);
+  }
+  std::sort(pl_surf.points.begin(), pl_surf.points.end(),
+      [](const PointType &a, const PointType &b) { return a.curvature < b.curvature; });
 }
 
 void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg)

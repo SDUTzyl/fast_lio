@@ -57,9 +57,10 @@ find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(visualization_msgs REQUIRED)
-find_package(pcl_ros REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
-find_package(livox_ros_driver2 REQUIRED)
+find_package(livox_ros_driver2 QUIET)
 find_package(rosidl_default_generators REQUIRED)
 
 set(dependencies
@@ -71,14 +72,18 @@ set(dependencies
   std_msgs
   std_srvs
   visualization_msgs
-  pcl_ros
+  tf2_ros
+  tf2_msgs
   pcl_conversions
-  livox_ros_driver2
 )
+
+if(livox_ros_driver2_FOUND)
+  list(APPEND dependencies livox_ros_driver2)
+endif()
 
 # Thirdparty libraries
 find_package(Eigen3 REQUIRED)
-find_package(PCL REQUIRED COMPONENTS common io)
+find_package(PCL REQUIRED COMPONENTS common io filters)
 
 message(Eigen: ${EIGEN3_INCLUDE_DIR})
 message(STATUS "PCL: ${PCL_INCLUDE_DIRS}")
@@ -93,6 +98,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 ament_export_dependencies(rosidl_default_runtime)
 
 add_executable(fastlio_mapping src/laserMapping.cpp include/ikd-Tree/ikd_Tree.cpp src/preprocess.cpp)
+if(livox_ros_driver2_FOUND)
+  target_compile_definitions(fastlio_mapping PRIVATE HAVE_LIVOX_ROS_DRIVER2)
+endif()
 target_include_directories(fastlio_mapping PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>

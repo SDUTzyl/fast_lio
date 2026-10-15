@@ -2,7 +2,10 @@
 #include <rclcpp/rclcpp.hpp>
 #include <pcl_conversions/pcl_conversions.h>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <cstdint>
+#ifdef HAVE_LIVOX_ROS_DRIVER2
 #include <livox_ros_driver2/msg/custom_msg.hpp>
+#endif
 
 using namespace std;
 
@@ -16,7 +19,8 @@ enum LID_TYPE
   AVIA = 1,
   VELO16,
   OUST64,
-  MID360
+  MID360,
+  HESAI_JT128
 };  //{1, 2, 3}
 enum TIME_UNIT
 {
@@ -112,6 +116,26 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(ouster_ros::Point,
     (std::uint32_t, range, range)
 )
 
+namespace hesai_ros
+{
+struct EIGEN_ALIGN16 Point
+{
+  PCL_ADD_POINT4D;
+  float intensity;
+  std::uint16_t ring;
+  double timestamp;
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+}
+POINT_CLOUD_REGISTER_POINT_STRUCT(hesai_ros::Point,
+    (float, x, x)
+    (float, y, y)
+    (float, z, z)
+    (float, intensity, intensity)
+    (std::uint16_t, ring, ring)
+    (double, timestamp, timestamp)
+)
+
 namespace livox_ros
 {
 typedef struct {
@@ -158,7 +182,9 @@ class Preprocess
   Preprocess();
   ~Preprocess();
   
+#ifdef HAVE_LIVOX_ROS_DRIVER2
   void process(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg, PointCloudXYZI::Ptr &pcl_out);
+#endif
   void process(const sensor_msgs::msg::PointCloud2::UniquePtr &msg, PointCloudXYZI::Ptr &pcl_out);
   void set(bool feat_en, int lid_type, double bld, int pfilt_num);
 
@@ -173,10 +199,13 @@ class Preprocess
   // ros::Publisher pub_full, pub_surf, pub_corn;
 
 private:
+#ifdef HAVE_LIVOX_ROS_DRIVER2
   void avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr &msg);
+#endif
   void oust64_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
   void velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
   void mid360_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
+  void hesai_jt128_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
   void default_handler(const sensor_msgs::msg::PointCloud2::UniquePtr &msg);
   void give_feature(PointCloudXYZI &pl, vector<orgtype> &types);
   void pub_func(PointCloudXYZI &pl, const rclcpp::Time &ct);
